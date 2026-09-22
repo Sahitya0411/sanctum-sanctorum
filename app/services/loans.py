@@ -1,11 +1,13 @@
 """Library loan operations: borrowing and returning books."""
+import math
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
 from sqlalchemy.orm import Session
 
-from app.models import Loan, MemberTier
+from app.models import Book, Loan, Member, MemberTier
 from app.schemas import LoanCreate, LoanOut, LoanStatus
+from app.services.members import ensure_can_access_restricted, get_member
 
 # Maximum concurrent unreturned loans per tier (None = unlimited).
 TIER_LOAN_LIMIT: Dict[str, Optional[int]] = {
@@ -21,17 +23,35 @@ LATE_FEE_PER_DAY_CENTS = 25
 
 def loan_status(loan: Loan, now: datetime) -> LoanStatus:
     """``returned`` if returned; else ``overdue`` if now > due_at; else ``active``."""
-    raise NotImplementedError("loan_status")
+    if loan.returned_at is not None:
+        return "returned"
+    if now > loan.due_at:
+        return "overdue"
+    return "active"
 
 
 def to_loan_out(loan: Loan, now: datetime) -> LoanOut:
     """Serialize a loan, computing its status at read time."""
-    raise NotImplementedError("to_loan_out")
+    return LoanOut(
+        id=loan.id,
+        member_id=loan.member_id,
+        book_id=loan.book_id,
+        borrowed_at=loan.borrowed_at,
+        due_at=loan.due_at,
+        returned_at=loan.returned_at,
+        late_fee_cents=loan.late_fee_cents,
+        status=loan_status(loan, now),
+    )
 
 
 def calculate_late_fee(due_at: datetime, returned_at: datetime, price_cents: int) -> int:
     """25 cents per started day late (any partial day counts), capped at the book's price; 0 if not late."""
-    raise NotImplementedError("calculate_late_fee")
+    if returned_at <= due_at:
+        return 0
+    seconds_late = (returned_at - due_at).total_seconds()
+    days_late = math.ceil(seconds_late / 86400)
+    fee = days_late * LATE_FEE_PER_DAY_CENTS
+    return min(fee, price_cents)
 
 
 def create_loan(db: Session, data: LoanCreate, now: datetime) -> LoanOut:
