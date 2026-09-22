@@ -2,7 +2,16 @@
 
 ## Live URL
 
-> _Deployment pending — see "Deployment" section below._
+**https://sanctum-sanctorum-qx9d.onrender.com**
+
+- `GET /health` → `{"status": "ok"}`
+- `GET /books` → returns 12 seeded books
+- Frontend UI → `https://sanctum-sanctorum-qx9d.onrender.com/`
+- API docs → `https://sanctum-sanctorum-qx9d.onrender.com/docs`
+
+> **Note:** Hosted on Render free tier (Postgres database). The instance may spin down after inactivity — first request after idle can take ~30 seconds to wake up.
+> Seeded member you can use: any member created via `POST /members` or use the demo data seeded at startup.
+
 
 ---
 
