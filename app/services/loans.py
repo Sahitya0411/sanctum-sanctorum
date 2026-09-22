@@ -3,6 +3,8 @@ import math
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional
 
+from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.models import Book, Loan, Member, MemberTier
@@ -67,7 +69,54 @@ def create_loan(db: Session, data: LoanCreate, now: datetime) -> LoanOut:
     On success: borrowed_at = now, due_at = now + 14 days, returned_at None,
     late_fee_cents 0, and stock is decremented by one.
     """
-    raise NotImplementedError("create_loan")
+    # 1. Load member and book.
+    member = get_member(db, data.member_id)
+    book = db.get(Book, data.book_id)
+    if book is None:
+        raise HTTPException(status_code=404, detail="Book not found")
+
+    # 2. Check restricted access.
+    if book.restricted:
+        ensure_can_access_restricted(member)
+
+    # Fetch member's existing loans once.
+    existing_loans = db.scalars(
+        select(Loan).where(Loan.member_id == data.member_id)
+    ).all()
+
+    # 3. Check for any overdue loan (not returned and now > due_at).
+    if any(loan.returned_at is None and now > loan.due_at for loan in existing_loans):
+        raise HTTPException(status_code=409, detail="Member has an overdue loan")
+
+    # 4. Check if member already has an unreturned copy of this book.
+    if any(loan.book_id == data.book_id and loan.returned_at is None for loan in existing_loans):
+        raise HTTPException(status_code=409, detail="Member already has an unreturned loan of this book")
+
+    # 5. Check tier loan limit.
+    limit = TIER_LOAN_LIMIT.get(member.tier)
+    if limit is not None:
+        active_count = sum(1 for loan in existing_loans if loan.returned_at is None)
+        if active_count >= limit:
+            raise HTTPException(status_code=409, detail="Member has reached their loan limit")
+
+    # 6. Check stock.
+    if book.stock == 0:
+        raise HTTPException(status_code=409, detail="Book is out of stock")
+
+    # Success: create the loan and decrement stock.
+    book.stock -= 1
+    loan = Loan(
+        member_id=data.member_id,
+        book_id=data.book_id,
+        borrowed_at=now,
+        due_at=now + LOAN_PERIOD,
+        returned_at=None,
+        late_fee_cents=0,
+    )
+    db.add(loan)
+    db.commit()
+    db.refresh(loan)
+    return to_loan_out(loan, now)
 
 
 def get_loan(db: Session, loan_id: int, now: datetime) -> LoanOut:
